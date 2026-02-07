@@ -1,0 +1,214 @@
+//----------[ Dynamic Locker System ]-----------
+
+enum lockerinfo
+{
+	lType,
+	Float:lPosX,
+	Float:lPosY,
+	Float:lPosZ,
+	lInt,
+	Text3D:lLabel,
+	lPickup
+};
+
+new lData[MAX_LOCKERS][lockerinfo],
+	Iterator: Lockers<MAX_LOCKERS>;
+	
+Locker_Refresh(lid)
+{
+    if(lid != -1)
+    {
+        if(IsValidDynamic3DTextLabel(lData[lid][lLabel]))
+            DestroyDynamic3DTextLabel(lData[lid][lLabel]);
+
+        if(IsValidDynamicPickup(lData[lid][lPickup]))
+            DestroyDynamicPickup(lData[lid][lPickup]);
+
+        static
+        string[255];
+		
+		new type[128];
+		if(lData[lid][lType] == 1)
+		{
+			type= "San Andrease Police Departement";
+		}
+		else if(lData[lid][lType] == 2)
+		{
+			type= "San Andreas Goverment Service";
+		}
+		else if(lData[lid][lType] == 3)
+		{
+			type= "San Andreas Medical Departement";
+		}
+		else if(lData[lid][lType] == 4)
+		{
+			type= "San Andreas News Agency";
+		}
+		else if(lData[lid][lType] == 6)
+		{
+			type= "San Andreas Fire Department";
+		}
+		else if(lData[lid][lType] == 5)
+		{
+			type= "VIP";
+		}
+		else
+		{
+			type= "Unknown";
+		}
+
+		format(string, sizeof(string), "[ID: %d]\n"WHITE_E"Type: "YELLOW_E"%s\n"WHITE_E"Type '"RED_E"/locker"WHITE_E"' to open", lid, type);
+		lData[lid][lPickup] = CreateDynamicPickup(1239, 23, lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ]+0.2, 0, lData[lid][lInt], _, 4);
+		lData[lid][lLabel] = CreateDynamic3DTextLabel(string, COLOR_BLUE, lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ]+0.5, 2.5);
+	}
+    return 1;
+}
+
+public:LoadLockers()
+{
+    static lid;
+	
+	new rows = cache_num_rows();
+ 	if(rows)
+  	{
+		for(new i; i < rows; i++)
+		{
+			cache_get_value_name_int(i, "id", lid);
+			cache_get_value_name_int(i, "type", lData[lid][lType]);
+			cache_get_value_name_float(i, "posx", lData[lid][lPosX]);
+			cache_get_value_name_float(i, "posy", lData[lid][lPosY]);
+			cache_get_value_name_float(i, "posz", lData[lid][lPosZ]);
+			cache_get_value_name_int(i, "interior", lData[lid][lInt]);
+			Locker_Refresh(lid);
+			Iter_Add(Lockers, lid);
+		}
+		printf("[Dynamic Locker Faction] Number of Loaded: %d.", rows);
+	}
+}
+	
+Locker_Save(lid)
+{
+	new cQuery[512];
+	format(cQuery, sizeof(cQuery), "UPDATE lockers SET type='%d', posx='%f', posy='%f', posz='%f', interior='%d' WHERE id='%d'",
+	lData[lid][lType],
+	lData[lid][lPosX],
+	lData[lid][lPosY],
+	lData[lid][lPosZ],
+	lData[lid][lInt],
+	lid
+	);
+	return mysql_tquery(g_SQL, cQuery);
+}
+
+
+//Dynamic Locker System
+CMD:createlocker(playerid, params[])
+{
+	if(PlayerData[playerid][pAdmin] < 4)
+		return PermissionError(playerid);
+	
+	new lid = Iter_Free(Lockers), query[500];
+	if(lid == -1) return SendErrorMessage(playerid, "You cant create more locker!");
+	new type;
+	if(sscanf(params, "d", type)) return SendSyntaxMessage(playerid, "/createlocker [type, 1.SAPD 2.SAGS 3.SAMD 4.SANA 5.VIP Locker 6.SAFD]");
+	
+	if(type < 1 || type > 6) return SendErrorMessage(playerid, "Invalid type.");
+	
+	GetPlayerPos(playerid, lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ]);
+	lData[lid][lInt] = GetPlayerInterior(playerid);
+	lData[lid][lType] = type;
+    Locker_Refresh(lid);
+	Iter_Add(Lockers, lid);
+
+	SendServerMessage(playerid, "You have created locker for %d with id %d.", type, lid);
+
+	mysql_format(g_SQL, query, sizeof(query), "INSERT INTO lockers SET id='%d', type='%d', posx='%f', posy='%f', posz='%f'", lid, lData[lid][lType], lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ]);
+	mysql_tquery(g_SQL, query, "OnLockerCreated", "i", lid);
+	return 1;
+}
+
+public:OnLockerCreated(lid)
+{
+	Locker_Save(lid);
+	return 1;
+}
+
+CMD:gotolocker(playerid, params[])
+{
+	new lid;
+	if(PlayerData[playerid][pAdmin] < 2)
+        return PermissionError(playerid);
+		
+	if(sscanf(params, "d", lid))
+		return SendSyntaxMessage(playerid, "/gotolocker [id]");
+	if(!Iter_Contains(Lockers, lid)) return SendErrorMessage(playerid, "The locker you specified ID of doesn't exist.");
+	SetPlayerPosition(playerid, lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ], 2.0);
+    SetPlayerInterior(playerid, lData[lid][lInt]);
+    SetPlayerVirtualWorld(playerid, 0);
+	SendServerMessage(playerid, "You have teleport to locker id %d", lid);
+	return 1;
+}
+
+CMD:editlocker(playerid, params[])
+{
+    static
+        lid,
+        type[24],
+        string[128];
+
+    if(PlayerData[playerid][pAdmin] < 4)
+        return PermissionError(playerid);
+
+    if(sscanf(params, "ds[24]S()[128]", lid, type, string))
+    {
+        SendSyntaxMessage(playerid, "/editlocker [id] [name]");
+        SendClientMessage(playerid, COLOR_YELLOW, "[NAMES]:{FFFFFF} location, type, delete");
+        return 1;
+    }
+    if((lid < 0 || lid >= MAX_LOCKERS))
+        return SendErrorMessage(playerid, "You have specified an invalid ID.");
+	if(!Iter_Contains(Lockers, lid)) return SendErrorMessage(playerid, "The doors you specified ID of doesn't exist.");
+
+    if(!strcmp(type, "location", true))
+    {
+		GetPlayerPos(playerid, lData[lid][lPosX], lData[lid][lPosY], lData[lid][lPosZ]);
+		lData[lid][lInt] = GetPlayerInterior(playerid);
+        Locker_Save(lid);
+		Locker_Refresh(lid);
+
+        SendAdminMessage(COLOR_RED, "%s has adjusted the location of locker ID: %d.", PlayerData[playerid][pAdminname], lid);
+    }
+    else if(!strcmp(type, "type", true))
+    {
+        new tipe;
+
+        if(sscanf(string, "d", tipe))
+            return SendSyntaxMessage(playerid, "/editlocker [id] [type] [type, 1.SAPD 2.SAGS 3.SAMD 4.SANA 5.VIP Locker 6.SAFD]");
+
+        if(tipe < 1 || tipe > 6)
+            return SendErrorMessage(playerid, "You must specify at least 1 - 5.");
+
+        lData[lid][lType] = tipe;
+        Locker_Save(lid);
+		Locker_Refresh(lid);
+
+        SendAdminMessage(COLOR_RED, "%s has set locker ID: %d to type id faction %d.", PlayerData[playerid][pAdminname], lid, tipe);
+    }
+    else if(!strcmp(type, "delete", true))
+    {
+		new query[128];
+		DestroyDynamic3DTextLabel(lData[lid][lLabel]);
+		DestroyDynamicPickup(lData[lid][lPickup]);
+		lData[lid][lPosX] = 0;
+		lData[lid][lPosY] = 0;
+		lData[lid][lPosZ] = 0;
+		lData[lid][lInt] = 0;
+		lData[lid][lLabel] = Text3D: INVALID_3DTEXT_ID;
+		lData[lid][lPickup] = -1;
+		Iter_Remove(Lockers, lid);
+		mysql_format(g_SQL, query, sizeof(query), "DELETE FROM lockers WHERE id=%d", lid);
+		mysql_tquery(g_SQL, query);
+        SendAdminMessage(COLOR_RED, "%s has delete locker ID: %d.", PlayerData[playerid][pAdminname], lid);
+    }
+    return 1;
+}
